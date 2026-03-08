@@ -8,7 +8,8 @@ Before making the conceptual model, I browsed around Amazon to get a better over
 <img width="681" height="666" alt="image" src="https://github.com/user-attachments/assets/e53f576a-46cd-4761-a6b9-2a1bdd04018d" />
 
 ## Logical model
-<img width="1558" height="599" alt="image" src="https://github.com/user-attachments/assets/728b416b-b223-41de-b3d4-549a179b46c2" />
+<img width="1486" height="621" alt="erModel" src="https://github.com/user-attachments/assets/0cac3faf-1753-4286-918e-2e74f6a65703" />
+
 
 ### Normalization
 I tried to adhere to the 3rd level of normalization such as seperating address from customer, format from book etc...

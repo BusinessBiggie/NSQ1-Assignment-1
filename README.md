@@ -2,6 +2,8 @@
 
 My attempt at a PostgreSQL implementation for Amazon.uk's bookstore. :)
 
+TODO:: Fix conceptual model, make entity vs relationship more clear in pics below
+
 ## Conceptual model
 Before making the conceptual model, I browsed around Amazon to get a better overview of how the categories worked in regards to sub categories, and what data could be found when clicking on a book. The multiplicity might be a bit off here as it was my initil idea.
 

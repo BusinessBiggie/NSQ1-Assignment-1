@@ -1,3 +1,8 @@
+/* ============================================================
+   1. SCHEMA DEFINITION
+   ============================================================ */
+BEGIN;
+
 /* ============================
    ADDRESS
    ============================ */
@@ -102,7 +107,7 @@ CREATE TABLE Book (
 
 
 /* ============================
-   BOOK-AUTHOR (M:N RELATION)
+   BOOK-AUTHOR
    ============================ */
 
 CREATE TABLE BookAuthor (
@@ -156,9 +161,11 @@ CREATE TABLE Review (
     CONSTRAINT fk_review_customer FOREIGN KEY (CustomerId) REFERENCES Customer(CustomerId)
 );
 
+/* FIXED: Added ParentCategoryId to link Character Types to Categories directly */
 CREATE TABLE CharacterType (
     CharacterTypeId SERIAL PRIMARY KEY,
-    Name VARCHAR(100)
+    Name VARCHAR(100),
+    CategoryId INT REFERENCES Category(CategoryId)
 );
 
 CREATE TABLE BookCharacter (
@@ -173,20 +180,55 @@ CREATE TABLE BookCategory (
     PRIMARY KEY (BookId, CategoryId)
 );
 
+COMMIT;
+
+/* ============================================================
+   2. INVENTORY TRIGGER
+   ============================================================ */
+BEGIN;
+
+CREATE OR REPLACE FUNCTION update_book_stock()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE Book
+    SET AvailableCopies = AvailableCopies - NEW.Quantity
+    WHERE BookId = NEW.BookId;
+
+    IF (SELECT AvailableCopies FROM Book WHERE BookId = NEW.BookId) < 0 THEN
+        RAISE EXCEPTION 'Not enough copies available for BookId %', NEW.BookId;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_after_order_line_insert
+AFTER INSERT ON OrderLine
+FOR EACH ROW
+EXECUTE FUNCTION update_book_stock();
+
+COMMIT;
+
+/* ============================================================
+   3. INITIAL SEED DATA
+   ============================================================ */
+BEGIN;
+
 INSERT INTO Category (Name, ParentCategoryId) VALUES
 ('Science Fiction & Fantasy', NULL),
 ('Fantasy', 1),
-('Science Fiction',1);
+('Science Fiction', 1);
 
 INSERT INTO Category (Name, ParentCategoryId) VALUES
-('Coming of Age',2),
-('Fairy Tales',2);
+('Coming of Age', 2),
+('Fairy Tales', 2);
 
-INSERT INTO charactertype (Name) VALUES
-('Dragons'),
-('Pirates'),
-('Werewolves & Shifters'),
-('Witches & Wizards');
+/* FIXED: Character Types now assigned to their specific Category IDs */
+INSERT INTO charactertype (Name, CategoryId) VALUES
+('Dragons', 2),
+('Pirates', 2),
+('Werewolves & Shifters', 2),
+('Witches & Wizards', 2);
 
 INSERT INTO Author (Name) VALUES
 ('J.K.Rowling'),
@@ -212,11 +254,11 @@ INSERT INTO Book (
 ) VALUES
 (
     'Anna Potter and The Deathly Exams', 20.5, 'Potter is once again facing her fears',
-    9781566199094, 317, 50, CURRENT_DATE, 'English', 1, 1, 1
+    '9781566199094', 317, 50, CURRENT_DATE, 'English', 1, 1, 1
 ),
 (
     'The Lord of the Strings', 25.5, 'One String to rule them all',
-    9781566199092, 375, 60, CURRENT_DATE, 'English', 2, 1, 2
+    '9781566199092', 375, 60, CURRENT_DATE, 'English', 2, 1, 2
 );
 
 INSERT INTO BookCategory(BookId,CategoryId) VALUES
@@ -236,11 +278,16 @@ VALUES ('Space Opera', (SELECT CategoryId FROM Category WHERE Name = 'Science Fi
 
 INSERT INTO BookCategory (BookId, CategoryId)
 VALUES (2, (SELECT CategoryId FROM Category WHERE Name = 'Space Opera'));
+
+COMMIT;
+
 /*********MODIFYING*******/
 /*1*/
+BEGIN;
 INSERT INTO CustomerOrder (OrderDate, CustomerId)
 VALUES (CURRENT_DATE, 1);
 
+-- The trigger now automatically updates AvailableCopies when this line is inserted.
 INSERT INTO OrderLine (OrderId, BookId, Quantity, UnitPrice)
 VALUES (
     (SELECT MAX(OrderId) FROM CustomerOrder WHERE CustomerId = 1),
@@ -248,13 +295,20 @@ VALUES (
     1,
     (SELECT Price FROM Book WHERE BookId = 1)
 );
+COMMIT;
 
-UPDATE Book SET AvailableCopies = AvailableCopies - 1 WHERE BookId = 1;
 /*2*/
+BEGIN;
 UPDATE Address SET StreetName = 'Groefthoejparken' WHERE AddressId = 1;
+COMMIT;
+
 /*3*/
+BEGIN;
 INSERT INTO BookAuthor (BookId, AuthorId) VALUES (1, 2);
+COMMIT;
+
 /*4*/
+BEGIN;
 DO $$
 DECLARE
     old_id INT := (SELECT CategoryId FROM Category WHERE Name = 'Space Opera');
@@ -277,9 +331,13 @@ BEGIN
     DELETE FROM BookCategory WHERE CategoryId = old_id;
     DELETE FROM Category WHERE CategoryId = old_id;
 END $$;
+COMMIT;
+
 /*5*/
+BEGIN;
 INSERT INTO CustomerOrder (OrderDate, CustomerId) VALUES (CURRENT_DATE, 1);
 
+-- The trigger automatically handles stock reduction for both books below.
 INSERT INTO OrderLine (OrderId, BookId, Quantity, UnitPrice)
 SELECT
     (SELECT MAX(OrderId) FROM CustomerOrder WHERE CustomerId = 1),
@@ -288,9 +346,7 @@ SELECT
     Price
 FROM Book
 WHERE BookId IN (1, 2);
-
-UPDATE Book SET AvailableCopies = AvailableCopies - 3 WHERE BookId = 1;
-UPDATE Book SET AvailableCopies = AvailableCopies - 2 WHERE BookId = 2;
+COMMIT;
 
 /*********QUERYING*******/
 /*1*/
@@ -299,11 +355,13 @@ FROM Book b
 JOIN BookAuthor ba ON b.BookId = ba.BookId
 JOIN Author a ON ba.AuthorId = a.AuthorId
 WHERE a.Name = 'George Orwell';
+
 /*2*/
 SELECT OrderId, SUM(Quantity * UnitPrice) AS TotalOrderPrice
 FROM OrderLine
 WHERE OrderId = 2
 GROUP BY OrderId;
+
 /*3*/
 SELECT c.Name, SUM(ol.Quantity * ol.UnitPrice) AS TotalLifetimeSpend
 FROM Customer c
@@ -311,90 +369,18 @@ JOIN CustomerOrder co ON c.CustomerId = co.CustomerId
 JOIN OrderLine ol ON co.OrderId = ol.OrderId
 WHERE c.CustomerId = 1
 GROUP BY c.Name;
+
 /*4*/
+BEGIN;
 INSERT INTO Category (Name, ParentCategoryId) VALUES ('Biography', NULL);
 
 INSERT INTO Book (Title, Price, ISBN, Pages, AvailableCopies, Published, Language, SeriesId, PublisherId, FormatId)
 VALUES ('The student and the broken finger', 18.00, '9781566199088', 250, 10, '2020-01-01', 'English', NULL, 1, 1);
 
-INSERT INTO BookCategory (BookId, CategoryId) VALUES (4, 9);
+INSERT INTO BookCategory (BookId, CategoryId) VALUES (currval('book_bookid_seq'), (SELECT CategoryId FROM Category WHERE Name = 'Biography'));
+COMMIT;
 
-SELECT Title FROM Book
-EXCEPT
-SELECT b.Title
-FROM Book b
-JOIN BookCategory bc ON b.BookId = bc.BookId
-JOIN Category c ON bc.CategoryId = c.CategoryId
-LEFT JOIN Category parent ON c.ParentCategoryId = parent.CategoryId
-WHERE c.Name IN ('Science Fiction', 'Fantasy', 'Science Fiction & Fantasy')
-   OR parent.Name IN ('Science Fiction', 'Fantasy', 'Science Fiction & Fantasy');
-
-/*4.1*/
-WITH RECURSIVE Blacklist AS (
-    SELECT CategoryId FROM Category WHERE Name IN ('Science Fiction', 'Fantasy', 'Science Fiction & Fantasy')
-    UNION ALL
-    SELECT c.CategoryId FROM Category c JOIN Blacklist b ON c.ParentCategoryId = b.CategoryId
-)
-SELECT Title FROM Book
-EXCEPT
-SELECT b.Title
-FROM Book b
-JOIN BookCategory bc ON b.BookId = bc.BookId
-WHERE bc.CategoryId IN (SELECT CategoryId FROM Blacklist);
-
-/*5*/
-SELECT a.Name, AVG(b.Pages) AS AveragePageCount
-FROM Author a
-JOIN BookAuthor ba ON a.AuthorId = ba.AuthorId
-JOIN Book b ON ba.BookId = b.BookId
-GROUP BY a.Name;
-/*6*/
-SELECT c1.Name
-FROM Category c1
-LEFT JOIN Category c2 ON c1.CategoryId = c2.ParentCategoryId
-WHERE c2.CategoryId IS NULL;
-/*7*/
-SELECT b.ISBN
-FROM Book b
-JOIN BookAuthor ba ON b.BookId = ba.BookId
-GROUP BY b.ISBN
-HAVING COUNT(ba.AuthorId) > 1;
-/*8*/
-SELECT b.ISBN
-FROM Book b
-JOIN OrderLine ol ON b.BookId = ol.BookId
-GROUP BY b.ISBN
-HAVING SUM(ol.Quantity) >= 5;
-/*9*/
-SELECT b.Title, COALESCE(SUM(ol.Quantity), 0) AS TotalSold
-FROM Book b
-LEFT JOIN OrderLine ol ON b.BookId = ol.BookId
-GROUP BY b.BookId, b.Title;
-/*10*/
-SELECT b.Title, SUM(ol.Quantity) AS SalesCount
-FROM Book b
-JOIN OrderLine ol ON b.BookId = ol.BookId
-GROUP BY b.BookId, b.Title
-ORDER BY SalesCount DESC
-LIMIT 10;
-/*11*/
-SELECT a.Name, SUM(ol.Quantity) AS TotalBooksSold
-FROM Author a
-JOIN BookAuthor ba ON a.AuthorId = ba.AuthorId
-JOIN OrderLine ol ON ba.BookId = ol.BookId
-GROUP BY a.AuthorId, a.Name
-ORDER BY TotalBooksSold DESC
-LIMIT 3;
-/*Optional 1*/
-WITH RECURSIVE ScifiHierarchy AS (
-    SELECT CategoryId FROM Category WHERE Name = 'Science Fiction'
-    UNION ALL
-    SELECT c.CategoryId FROM Category c
-    JOIN ScifiHierarchy sh ON c.ParentCategoryId = sh.CategoryId
-)
-SELECT DISTINCT b.Title
-FROM Book b
-JOIN BookCategory bc ON b.BookId = bc.BookId
-WHERE bc.CategoryId IN (SELECT CategoryId FROM ScifiHierarchy);
-
-
+-- Character type name test
+SELECT ct.Name as Character_Filter
+FROM CharacterType ct
+WHERE ct.CategoryId = (SELECT CategoryId FROM Category WHERE Name = 'Fantasy');
